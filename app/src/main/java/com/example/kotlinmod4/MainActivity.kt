@@ -9,23 +9,22 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -59,7 +58,7 @@ class MainActivity : ComponentActivity() {
             MaterialTheme {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
-                    color = Color(0xFFF5F0E8)
+                    color = Color(0xFFF7F6FB)
                 ) {
                     SocialFeedScreen(repository = SocialFeedRepository(this))
                 }
@@ -74,7 +73,6 @@ private fun SocialFeedScreen(repository: SocialFeedRepository) {
     val posts = remember { mutableStateListOf<PostCardUiState>() }
     val activeJobs = remember { mutableStateListOf<Job>() }
     var isRefreshing by remember { mutableStateOf(false) }
-    var feedMessage by remember { mutableStateOf("Готово к загрузке") }
 
     fun cancelAllJobs() {
         activeJobs.forEach { it.cancel() }
@@ -84,11 +82,10 @@ private fun SocialFeedScreen(repository: SocialFeedRepository) {
     fun refreshFeed() {
         cancelAllJobs()
         isRefreshing = true
-        feedMessage = "Загружаю ленту..."
         posts.clear()
 
         val feedJob = scope.launch {
-            val loadedPosts = repository.loadPosts()
+            val loadedPosts = repository.loadPosts().take(5)
             posts.addAll(
                 loadedPosts.map { post ->
                     PostCardUiState(post = post, status = LoadStatus.Loading)
@@ -96,7 +93,6 @@ private fun SocialFeedScreen(repository: SocialFeedRepository) {
             )
 
             isRefreshing = false
-            feedMessage = "Посты читаются по мере готовности карточек"
 
             loadedPosts.forEach { post ->
                 val postJob = launchPostLoading(
@@ -130,49 +126,47 @@ private fun SocialFeedScreen(repository: SocialFeedRepository) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(16.dp)
+            .padding(horizontal = 16.dp, vertical = 18.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Social Feed",
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = feedMessage,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFF6F6253)
-                )
-            }
-            Button(
-                onClick = { refreshFeed() }
-            ) {
+            Text(
+                text = "Социальная лента",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Normal,
+                color = Color(0xFF222227)
+            )
+            TextButton(onClick = { refreshFeed() }) {
                 Text("Обновить")
             }
         }
 
         if (isRefreshing && posts.isEmpty()) {
             Row(
-                modifier = Modifier.padding(top = 16.dp),
+                modifier = Modifier.padding(top = 12.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                CircularProgressIndicator()
-                Text("Загружаю список постов...")
+                CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    strokeWidth = 2.dp
+                )
+                Text(
+                    text = "Загружаю посты...",
+                    color = Color(0xFF6D6A74)
+                )
             }
         }
 
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(top = 18.dp),
-            contentPadding = PaddingValues(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(top = 14.dp),
+            contentPadding = PaddingValues(bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             items(posts, key = { it.post.id }) { cardState ->
                 PostCard(cardState = cardState)
@@ -253,14 +247,16 @@ private fun launchPostLoading(
 @Composable
 private fun PostCard(cardState: PostCardUiState) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        shape = RoundedCornerShape(20.dp)
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFE7E5EC)),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -271,22 +267,25 @@ private fun PostCard(cardState: PostCardUiState) {
                     Text(
                         text = cardState.post.title,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF26262C)
                     )
                     Text(
-                        text = "userId: ${cardState.post.userId}",
+                        text = buildUserSubtitle(cardState),
                         style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFF7E7368)
+                        color = Color(0xFF88858E),
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
-                StatusBadge(status = cardState.status)
             }
 
             Text(
                 text = cardState.post.body,
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color(0xFF4D4338)
+                style = MaterialTheme.typography.bodyLarge,
+                color = Color(0xFF34343A)
             )
+
+            HorizontalDivider(color = Color(0xFFCAC7D1), thickness = 1.dp)
 
             CommentsBlock(cardState = cardState)
         }
@@ -298,17 +297,24 @@ private fun AvatarBlock(cardState: PostCardUiState) {
     when {
         cardState.status == LoadStatus.Loading -> {
             Box(
-                modifier = Modifier.size(52.dp),
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFFD2D0D9)),
                 contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+                Text(
+                    text = "...",
+                    color = Color(0xFF5E5C64),
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
 
         cardState.avatar != null -> {
             Box(
                 modifier = Modifier
-                    .size(52.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .background(cardState.avatar.color),
                 contentAlignment = Alignment.Center
@@ -324,12 +330,16 @@ private fun AvatarBlock(cardState: PostCardUiState) {
         else -> {
             Box(
                 modifier = Modifier
-                    .size(52.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFFD2C8BD)),
+                    .background(Color(0xFFBBB8C2)),
                 contentAlignment = Alignment.Center
             ) {
-                Text("ERR", color = Color(0xFF7A1E1E), fontWeight = FontWeight.Bold)
+                Text(
+                    text = "?",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
     }
@@ -337,75 +347,48 @@ private fun AvatarBlock(cardState: PostCardUiState) {
 
 @Composable
 private fun CommentsBlock(cardState: PostCardUiState) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            text = "Комментарии",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold
-        )
-
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         when {
             cardState.status == LoadStatus.Loading -> {
-                Text("Loading...", color = Color(0xFF7E7368))
+                Text(
+                    text = "Комментарии загружаются...",
+                    color = Color(0xFF75727C)
+                )
             }
 
             cardState.commentsFailed -> {
-                Text("Не удалось загрузить комментарии", color = Color(0xFFB53E3E))
+                Text(
+                    text = "Комментарии сейчас недоступны",
+                    color = Color(0xFF8D5D5D)
+                )
             }
 
             cardState.comments.isEmpty() -> {
-                Text("Комментариев пока нет", color = Color(0xFF7E7368))
+                Text(
+                    text = "Комментариев пока нет",
+                    color = Color(0xFF75727C)
+                )
             }
 
             else -> {
                 cardState.comments.take(3).forEach { comment ->
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(Color(0xFFF6F1E9))
-                            .padding(12.dp)
-                    ) {
-                        Text(
-                            text = comment.name,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = comment.body,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Color(0xFF5B5146)
-                        )
-                    }
+                    Text(
+                        text = "${comment.name}: ${comment.body}",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color(0xFF414149)
+                    )
                 }
             }
         }
     }
 }
 
-@Composable
-private fun StatusBadge(status: LoadStatus) {
-    val background = when (status) {
-        LoadStatus.Loading -> Color(0xFFFFE5B5)
-        LoadStatus.Ready -> Color(0xFFD8F0D2)
-        LoadStatus.Error -> Color(0xFFF6D2D2)
+private fun buildUserSubtitle(cardState: PostCardUiState): String {
+    return when (cardState.status) {
+        LoadStatus.Loading -> "Пользователь #${cardState.post.userId} • загрузка..."
+        LoadStatus.Ready -> "Пользователь #${cardState.post.userId}"
+        LoadStatus.Error -> "Пользователь #${cardState.post.userId} • часть данных недоступна"
     }
-
-    val label = when (status) {
-        LoadStatus.Loading -> "Loading"
-        LoadStatus.Ready -> "Ready"
-        LoadStatus.Error -> "Error"
-    }
-
-    Text(
-        text = label,
-        modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(background)
-            .padding(horizontal = 10.dp, vertical = 5.dp),
-        style = MaterialTheme.typography.labelMedium,
-        fontWeight = FontWeight.SemiBold
-    )
 }
 
 private class SocialFeedRepository(private val activity: ComponentActivity) {
@@ -471,12 +454,11 @@ private class SocialFeedRepository(private val activity: ComponentActivity) {
 
     private fun avatarColorFor(seed: String): Color {
         val palette = listOf(
-            Color(0xFF7C9A92),
-            Color(0xFFC96F5D),
-            Color(0xFF6D83B3),
-            Color(0xFFAD8B73),
-            Color(0xFF6B9080),
-            Color(0xFFB56576)
+            Color(0xFFE91E63),
+            Color(0xFF3F51B5),
+            Color(0xFF4CAF50),
+            Color(0xFFFF5722),
+            Color(0xFF9C27B0)
         )
         val index = seed.hashCode().absoluteValue % palette.size
         return palette[index]
