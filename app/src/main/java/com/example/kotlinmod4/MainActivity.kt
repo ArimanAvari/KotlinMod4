@@ -1,7 +1,9 @@
 package com.example.kotlinmod4
 
 import android.os.Bundle
+import android.view.View
 import android.widget.Button
+import android.widget.EditText
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -29,12 +31,15 @@ import kotlin.system.measureTimeMillis
 class MainActivity : AppCompatActivity() {
 
     private val screenScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val outputLines = mutableListOf<String>()
 
     private lateinit var pathText: TextView
     private lateinit var outputText: TextView
+    private lateinit var timeoutInput: EditText
     private lateinit var startSearchButton: Button
-    private lateinit var timeoutSearchButton: Button
     private lateinit var cancelButton: Button
+
+    private lateinit var searchRootDir: File
 
     private var searchJob: Job? = null
 
@@ -45,8 +50,8 @@ class MainActivity : AppCompatActivity() {
 
         pathText = findViewById(R.id.pathText)
         outputText = findViewById(R.id.outputText)
+        timeoutInput = findViewById(R.id.timeoutInput)
         startSearchButton = findViewById(R.id.startSearchButton)
-        timeoutSearchButton = findViewById(R.id.timeoutSearchButton)
         cancelButton = findViewById(R.id.cancelButton)
 
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { view, insets ->
@@ -55,25 +60,13 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        val rootDir = prepareDemoDirectory()
-        pathText.text = "Папка для проверки:\n${rootDir.absolutePath}"
-        outputText.text = buildString {
-            appendLine("task2 готов к запуску")
-            appendLine()
-            appendLine("Что лежит в папке:")
-            appendLine("- 5 json-файлов")
-            appendLine("- 2 группы дублей")
-            appendLine("- 1 txt-файл, который должен игнорироваться")
-            appendLine()
-            append("Можно запустить обычный поиск или короткий таймаут для демонстрации отмены.")
-        }
+        searchRootDir = prepareDemoDirectory()
+        pathText.text = "Директория: ${searchRootDir.absolutePath}"
+        timeoutInput.setText(DEFAULT_TIMEOUT_SECONDS.toString())
+        outputText.text = "Результат появится здесь после запуска поиска."
 
         startSearchButton.setOnClickListener {
-            runDuplicateSearch(rootDir, timeoutMs = 5_000, title = "Обычный поиск")
-        }
-
-        timeoutSearchButton.setOnClickListener {
-            runDuplicateSearch(rootDir, timeoutMs = 600, title = "Поиск с коротким таймаутом")
+            runDuplicateSearch(searchRootDir, readTimeoutSeconds())
         }
 
         cancelButton.setOnClickListener {
@@ -81,49 +74,64 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun runDuplicateSearch(rootDir: File, timeoutMs: Long, title: String) {
+    private fun runDuplicateSearch(rootDir: File, timeoutSeconds: Long) {
         searchJob?.cancel()
         searchJob = screenScope.launch {
-            setButtonsEnabled(isSearching = true)
-            outputText.text = "$title...\nСканирую директорию и считаю SHA-256"
+            setControlsState(isSearching = true)
+            clearOutput()
+            appendOutputLine("Сканируем директорию...")
+            appendOutputLine("Таймаут: $timeoutSeconds сек")
 
             try {
                 var result: SearchReport? = null
                 val elapsedMs = measureTimeMillis {
-                    result = withTimeoutOrNull(timeoutMs) {
-                        findDuplicateGroups(rootDir)
+                    result = withTimeoutOrNull(timeoutSeconds * 1_000) {
+                        findDuplicateGroups(
+                            rootDir = rootDir,
+                            onFilesFound = { count ->
+                                appendOutputLine("Найдено файлов: $count")
+                            },
+                            onHashingStarted = { fileName ->
+                                appendOutputLine("Хэшируем: $fileName")
+                            }
+                        )
                     }
                 }
 
-                outputText.text = if (result == null) {
-                    buildString {
-                        appendLine("Поиск прерван по таймауту")
-                        appendLine("Лимит: ${timeoutMs} мс")
-                        append("Прошло: ${elapsedMs} мс")
-                    }
+                if (result == null) {
+                    appendOutputLine("")
+                    appendOutputLine("Поиск остановлен по таймауту")
+                    appendOutputLine("Прошло времени: ${elapsedMs} мс")
                 } else {
-                    formatReport(
-                        title = title,
-                        timeoutMs = timeoutMs,
-                        elapsedMs = elapsedMs,
-                        report = result!!
-                    )
+                    appendOutputLine("Анализ завершён")
+                    appendOutputLine("")
+                    appendReport(result!!, elapsedMs)
                 }
             } catch (_: CancellationException) {
-                outputText.text = "Поиск отменен вручную"
+                appendOutputLine("")
+                appendOutputLine("Поиск остановлен вручную")
             } finally {
-                setButtonsEnabled(isSearching = false)
+                setControlsState(isSearching = false)
             }
         }
     }
 
-    private suspend fun findDuplicateGroups(rootDir: File): SearchReport = coroutineScope {
+    private suspend fun findDuplicateGroups(
+        rootDir: File,
+        onFilesFound: suspend (Int) -> Unit,
+        onHashingStarted: suspend (String) -> Unit
+    ): SearchReport = coroutineScope {
         val jsonFiles = rootDir.walkTopDown()
             .filter { it.isFile && it.extension.equals("json", ignoreCase = true) }
             .toList()
 
+        onFilesFound(jsonFiles.size)
+
         val fileHashes = jsonFiles.map { file ->
             async(Dispatchers.IO) {
+                withContext(Dispatchers.Main) {
+                    onHashingStarted(file.name)
+                }
                 file to computeSha256(file)
             }
         }.awaitAll()
@@ -131,7 +139,12 @@ class MainActivity : AppCompatActivity() {
         val duplicateGroups = fileHashes
             .groupBy(keySelector = { it.second }, valueTransform = { it.first })
             .filterValues { files -> files.size > 1 }
-            .map { (hash, files) -> DuplicateGroup(hash = hash, files = files) }
+            .map { (hash, files) ->
+                DuplicateGroup(
+                    hash = hash,
+                    files = files.sortedBy { it.name }
+                )
+            }
             .sortedByDescending { it.files.size }
 
         SearchReport(
@@ -162,83 +175,111 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun prepareDemoDirectory(): File {
-        val rootDir = File(filesDir, "task2_demo")
-        val nestedDir = File(rootDir, "archive")
-        val deepDir = File(nestedDir, "backup")
+        val rootDir = File(filesDir, "search_test")
+        val sub1Dir = File(rootDir, "sub1")
+        val sub2Dir = File(rootDir, "sub2")
+
+        if (rootDir.exists()) {
+            rootDir.deleteRecursively()
+        }
 
         rootDir.mkdirs()
-        nestedDir.mkdirs()
-        deepDir.mkdirs()
+        sub1Dir.mkdirs()
+        sub2Dir.mkdirs()
 
-        File(rootDir, "orders_day1.json").writeText(
-            """
-            {"orders":[{"id":1,"sum":450},{"id":2,"sum":890}]}
-            """.trimIndent()
-        )
-        File(nestedDir, "orders_day1_copy.json").writeText(
-            """
-            {"orders":[{"id":1,"sum":450},{"id":2,"sum":890}]}
-            """.trimIndent()
-        )
-        File(rootDir, "users_export.json").writeText(
-            """
-            [{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}]
-            """.trimIndent()
-        )
-        File(deepDir, "users_export_backup.json").writeText(
-            """
-            [{"id":1,"name":"Alice"},{"id":2,"name":"Bob"}]
-            """.trimIndent()
-        )
-        File(rootDir, "weather_unique.json").writeText(
-            """
-            [{"city":"Moscow","temp":-8},{"city":"Tokyo","temp":11}]
-            """.trimIndent()
-        )
-        File(rootDir, "readme.txt").writeText("Этот файл не должен участвовать в поиске дублей")
+        val duplicateGroupOne = """
+            {"items":[{"id":1,"title":"Notebook"},{"id":2,"title":"Phone"}]}
+        """.trimIndent()
+
+        val duplicateGroupTwo = """
+            {"users":[{"id":7,"name":"Max"},{"id":8,"name":"Ann"}]}
+        """.trimIndent()
+
+        File(rootDir, "file_a.json").writeText(duplicateGroupOne)
+        File(sub1Dir, "file_b.json").writeText(duplicateGroupOne)
+        File(rootDir, "extra.json").writeText(duplicateGroupOne)
+        File(sub1Dir, "file_c.json").writeText(duplicateGroupTwo)
+        File(sub2Dir, "file_d.json").writeText(duplicateGroupTwo)
+        File(rootDir, "file_e.json").writeText("""{"city":"Moscow","temp":-6}""")
+        File(rootDir, "notes.txt").writeText("Этот файл нужен, чтобы показать фильтрацию по json.")
 
         return rootDir
     }
 
-    private fun formatReport(
-        title: String,
-        timeoutMs: Long,
-        elapsedMs: Long,
-        report: SearchReport
-    ): String {
-        return buildString {
-            appendLine(title)
-            appendLine("Папка: ${report.scannedDirectory.absolutePath}")
-            appendLine("Таймаут: ${timeoutMs} мс")
-            appendLine("Обработано json-файлов: ${report.totalJsonFiles}")
-            appendLine("Время: ${elapsedMs} мс")
-            appendLine()
+    private fun appendReport(report: SearchReport, elapsedMs: Long) {
+        if (report.duplicateGroups.isEmpty()) {
+            appendOutputLine("=== Дубликаты не найдены ===")
+            appendOutputLine("")
+            appendOutputLine("Общее время: ${elapsedMs} мс")
+            return
+        }
 
-            if (report.duplicateGroups.isEmpty()) {
-                append("Дубликаты не найдены")
+        appendOutputLine("=== Найдены дубликаты ===")
+        appendOutputLine("")
+
+        report.duplicateGroups.forEachIndexed { index, group ->
+            val shortHash = if (group.hash.length > 16) {
+                "${group.hash.take(16)}..."
             } else {
-                appendLine("Найдены группы дублей:")
-                report.duplicateGroups.forEachIndexed { index, group ->
-                    appendLine()
-                    appendLine("Группа ${index + 1}:")
-                    appendLine("SHA-256: ${group.hash}")
-                    group.files.forEach { file ->
-                        appendLine("- ${file.relativeTo(report.scannedDirectory)}")
-                    }
-                }
+                group.hash
             }
+
+            appendOutputLine("Хэш: $shortHash")
+            group.files.forEach { file ->
+                appendOutputLine("📄 ${file.name} (${folderLabel(file, report.scannedDirectory)})")
+            }
+
+            if (index != report.duplicateGroups.lastIndex) {
+                appendOutputLine("")
+            }
+        }
+
+        appendOutputLine("")
+        appendOutputLine("Общее время: ${elapsedMs} мс")
+    }
+
+    private fun folderLabel(file: File, rootDir: File): String {
+        val parent = file.parentFile ?: return rootDir.name
+        return if (parent.absolutePath == rootDir.absolutePath) {
+            rootDir.name
+        } else {
+            parent.name
         }
     }
 
-    private fun setButtonsEnabled(isSearching: Boolean) {
+    private fun readTimeoutSeconds(): Long {
+        val parsedValue = timeoutInput.text.toString().trim().toLongOrNull()
+        return when {
+            parsedValue == null -> DEFAULT_TIMEOUT_SECONDS
+            parsedValue < 1 -> 1L
+            else -> parsedValue
+        }
+    }
+
+    private fun clearOutput() {
+        outputLines.clear()
+        outputText.text = ""
+    }
+
+    private fun appendOutputLine(line: String) {
+        outputLines += line
+        outputText.text = outputLines.joinToString("\n")
+    }
+
+    private fun setControlsState(isSearching: Boolean) {
         startSearchButton.isEnabled = !isSearching
-        timeoutSearchButton.isEnabled = !isSearching
+        timeoutInput.isEnabled = !isSearching
         cancelButton.isEnabled = isSearching
+        cancelButton.visibility = if (isSearching) View.VISIBLE else View.GONE
     }
 
     override fun onDestroy() {
         super.onDestroy()
         screenScope.cancel()
+    }
+
+    companion object {
+        private const val DEFAULT_TIMEOUT_SECONDS = 5L
     }
 }
 
