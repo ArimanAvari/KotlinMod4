@@ -1,6 +1,7 @@
 package com.example.kotlinmod4
 
 import android.os.Bundle
+import android.widget.Button
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
@@ -22,37 +23,46 @@ import kotlin.system.measureTimeMillis
 class MainActivity : AppCompatActivity() {
 
     private val screenScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private lateinit var outputText: TextView
+
+    private lateinit var resultText: TextView
+    private lateinit var startButton: Button
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
-        outputText = findViewById(R.id.outputText)
 
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
+        resultText = findViewById(R.id.resultText)
+        startButton = findViewById(R.id.startButton)
+
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { view, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
+            view.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
         }
 
-        runTaskOne()
+        startButton.setOnClickListener {
+            runTaskOne()
+        }
     }
 
     private fun runTaskOne() {
-        screenScope.launch {
-            outputText.text = "Запуск task1...\nЗагружаю 3 источника параллельно"
+        startButton.isEnabled = false
+        resultText.text = "Запускаю параллельную загрузку..."
 
+        screenScope.launch {
             var report = ""
             val elapsedMs = measureTimeMillis {
                 report = processSources()
             }
 
-            outputText.text = buildString {
+            resultText.text = buildString {
                 append(report)
                 appendLine()
-                appendLine("Общее время: ${elapsedMs} мс")
+                append("⏱ Общее время: ${elapsedMs} мс (ожидаемо ~2500 мс)")
             }
+
+            startButton.isEnabled = true
         }
     }
 
@@ -73,55 +83,46 @@ class MainActivity : AppCompatActivity() {
         val salesResult = salesDeferred.await()
         val weatherResult = weatherDeferred.await()
 
-        val errors = mutableListOf<String>()
-        usersResult.exceptionOrNull()?.let {
-            errors += "Пользователи: ${it.message}"
-        }
-        salesResult.exceptionOrNull()?.let {
-            errors += "Продажи: ${it.message}"
-        }
-        weatherResult.exceptionOrNull()?.let {
-            errors += "Погода: ${it.message}"
-        }
-
         buildString {
-            appendLine("Результат выполнения task1")
-            appendLine("-------------------------")
+            appendLine("=== Результаты ===")
+            appendLine()
 
-            usersResult.getOrNull()?.let { users ->
-                appendLine("Пользователи (${users.size}): ${users.joinToString()}")
+            usersResult.onSuccess { users ->
+                appendLine("👤 Пользователи:")
+                appendLine(users.joinToString(prefix = "- ", separator = "\n- "))
+                appendLine()
+            }.onFailure {
+                appendLine("❌ Ошибка загрузки пользователей: ${it.message}")
+                appendLine()
             }
 
-            salesResult.getOrNull()?.let { sales ->
-                appendLine("Продажи за день:")
+            salesResult.onSuccess { sales ->
+                appendLine("📊 Статистика продаж:")
                 sales.forEach { (product, qty) ->
                     appendLine("- $product: $qty шт.")
                 }
+                appendLine()
+            }.onFailure {
+                appendLine("❌ Ошибка загрузки продаж: ${it.message}")
+                appendLine()
             }
 
-            weatherResult.getOrNull()?.let { weather ->
-                appendLine("Погода:")
+            weatherResult.onSuccess { weather ->
+                appendLine("☀ Погода:")
                 weather.forEach { line ->
                     appendLine("- $line")
                 }
-            }
-
-            if (errors.isNotEmpty()) {
                 appendLine()
-                appendLine("Есть ошибки (программа не упала):")
-                errors.forEach { error ->
-                    appendLine("- $error")
-                }
-            } else {
+            }.onFailure {
+                appendLine("❌ Ошибка загрузки погоды: ${it.message}")
                 appendLine()
-                append("Все 3 задачи завершились успешно")
             }
-        }
+        }.trimEnd()
     }
 
     private suspend fun loadUsers(): List<String> {
         delay(1_800)
-        maybeFail("users.json")
+        maybeFail("Сервер недоступен (users)")
 
         val raw = readAssetText("users.json")
         val array = JSONArray(raw)
@@ -133,7 +134,7 @@ class MainActivity : AppCompatActivity() {
 
     private suspend fun loadSalesByProduct(): Map<String, Int> {
         delay(1_200)
-        maybeFail("sales.json")
+        maybeFail("Сервер недоступен (sales)")
 
         val raw = readAssetText("sales.json")
         val json = JSONObject(raw)
@@ -152,7 +153,7 @@ class MainActivity : AppCompatActivity() {
 
     private suspend fun loadWeatherLines(): List<String> {
         delay(2_500)
-        maybeFail("weather.json")
+        maybeFail("Сервер недоступен (weather)")
 
         val raw = readAssetText("weather.json")
         val array = JSONArray(raw)
@@ -161,13 +162,14 @@ class MainActivity : AppCompatActivity() {
             val item = array.getJSONObject(index)
             val city = item.getString("city")
             val temp = item.getInt("temp")
-            "$city: ${temp}°C"
+            val condition = item.getString("condition")
+            "$city: ${temp}°C, $condition"
         }
     }
 
-    private fun maybeFail(sourceName: String) {
+    private fun maybeFail(message: String) {
         if (Random.nextInt(100) < 30) {
-            throw IllegalStateException("случайный сбой при чтении $sourceName")
+            throw IllegalStateException(message)
         }
     }
 
