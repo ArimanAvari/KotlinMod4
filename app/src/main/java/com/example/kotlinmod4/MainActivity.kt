@@ -1,15 +1,19 @@
 package com.example.kotlinmod4
 
+import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -20,6 +24,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            launchTimerService()
+        } else {
+            statusText.text = "Нужно разрешение на уведомления"
+        }
+    }
 
     private val timerReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -73,12 +87,26 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startTimerService() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ActivityCompat.checkSelfPermission(
+                this,
+                Manifest.permission.POST_NOTIFICATIONS
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+
+        launchTimerService()
+    }
+
+    private fun launchTimerService() {
         val intent = Intent(this, TimerForegroundService::class.java)
         ContextCompat.startForegroundService(this, intent)
         statusText.text = "Сервис запускается..."
     }
 
     private fun updateCounter(seconds: Int) {
-        counterText.text = "$seconds"
+        counterText.text = seconds.toString()
     }
 }
